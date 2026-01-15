@@ -108,15 +108,24 @@ public class EnemyController : MonoBehaviour, IDamageable
     /// OOP PRINCIPLE: ENCAPSULATION
     /// Death logic is private and can only be triggered through TakeDamage.
     /// Handles cleanup, scoring, and object pooling.
+    /// 
+    /// OOP PRINCIPLE: EVENT-DRIVEN ARCHITECTURE
+    /// Notifies GameManager of death BEFORE returning to pool.
+    /// This allows the wave system to track enemy count accurately.
     /// </summary>
     private void Die()
     {
         Debug.Log($"{gameObject.name} died!");
         
-        // Add score to game manager
+        // Notify GameManager of death for wave tracking
+        /// OOP PRINCIPLE: MEDIATOR PATTERN
+        /// EnemyController doesn't know about EnemySpawner.
+        /// It only communicates with GameManager (the mediator),
+        /// which handles forwarding the event to interested parties.
         if (GameManager.Instance != null)
         {
             GameManager.Instance.AddScore(scoreValue);
+            GameManager.Instance.OnEnemyKilled(); // NEW: Wave system tracking
         }
         
         // Return to pool instead of destroying

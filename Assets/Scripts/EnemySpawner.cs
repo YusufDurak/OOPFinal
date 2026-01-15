@@ -1,29 +1,62 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 /// <summary>
+/// OOP PRINCIPLE: COMPOSITION
+/// Wave class is a data structure that composes the wave configuration.
+/// Serializable allows Inspector editing while maintaining encapsulation.
+/// </summary>
+[System.Serializable]
+public class Wave
+{
+    public string waveName = "Wave 1";
+    public int enemyCount = 5;
+    public float spawnRate = 2f;
+    
+    /// <summary>
+    /// Constructor for easy wave creation in code
+    /// </summary>
+    public Wave(string name, int count, float rate)
+    {
+        waveName = name;
+        enemyCount = count;
+        spawnRate = rate;
+    }
+}
+
+/// <summary>
 /// OOP PRINCIPLE: SINGLE RESPONSIBILITY PRINCIPLE
-/// This class has ONE responsibility: spawning enemies at intervals.
+/// This class has ONE responsibility: spawning enemies in waves.
 /// It doesn't manage enemy behavior, game state, or object pools directly.
 /// 
 /// OOP PRINCIPLE: DEPENDENCY INVERSION
 /// Depends on ObjectPoolManager abstraction rather than concrete enemy creation.
 /// This makes the spawner flexible and testable.
+/// 
+/// OOP PRINCIPLE: EVENT-DRIVEN ARCHITECTURE
+/// Uses callbacks from GameManager to track enemy deaths instead of polling.
 /// </summary>
 public class EnemySpawner : MonoBehaviour
 {
+    [Header("Wave Configuration")]
+    [SerializeField] private List<Wave> waves = new List<Wave>();
+    
     [Header("Spawn Settings")]
     [SerializeField] private string enemyPoolTag = "Enemy";
-    [SerializeField] private float spawnInterval = 2f;
     [SerializeField] private float spawnRadius = 15f;
-    [SerializeField] private int maxEnemies = 10;
+    [SerializeField] private float timeBetweenWaves = 5f;
     
     [Header("References")]
     [SerializeField] private Transform player;
     
     /// OOP PRINCIPLE: ENCAPSULATION
     /// Private fields track internal state without exposing implementation details
+    private int _currentWaveIndex = 0;
+    private int _enemiesSpawnedThisWave = 0;
+    private int _enemiesAliveThisWave = 0;
     private float _lastSpawnTime;
-    private int _currentEnemyCount;
+    private bool _isWaveActive = false;
+    private float _waveEndTime;
     
     private void Start()
     {
@@ -41,23 +74,138 @@ public class EnemySpawner : MonoBehaviour
             }
         }
         
-        _lastSpawnTime = -spawnInterval; // Allow immediate first spawn
+        // Create default waves if none configured
+        if (waves == null || waves.Count == 0)
+        {
+            CreateDefaultWaves();
+        }
+        
+        // Register with GameManager for enemy death notifications
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.RegisterSpawner(this);
+        }
+        
+        // Start first wave
+        StartWave();
     }
     
     private void Update()
     {
-        // Only spawn if game is playing
+        // Only operate if game is playing
         if (GameManager.Instance != null && GameManager.Instance.State != GameManager.GameState.Playing)
         {
             return;
         }
         
-        // Check if it's time to spawn and we haven't hit the limit
-        if (Time.time >= _lastSpawnTime + spawnInterval && _currentEnemyCount < maxEnemies)
+        /// OOP PRINCIPLE: STATE MACHINE (Simple)
+        /// Wave spawning follows a state: spawning -> waiting for clear -> next wave
+        if (_isWaveActive)
+        {
+            UpdateWaveSpawning();
+        }
+        else
+        {
+            // Wait between waves
+            if (Time.time >= _waveEndTime && _currentWaveIndex < waves.Count)
+            {
+                StartWave();
+            }
+        }
+    }
+    
+    /// <summary>
+    /// OOP PRINCIPLE: ENCAPSULATION
+    /// Wave spawning logic encapsulated in dedicated method
+    /// </summary>
+    private void UpdateWaveSpawning()
+    {
+        Wave currentWave = waves[_currentWaveIndex];
+        
+        // Check if we've spawned all enemies for this wave
+        if (_enemiesSpawnedThisWave >= currentWave.enemyCount)
+        {
+            // Check if all enemies are defeated
+            if (_enemiesAliveThisWave <= 0)
+            {
+                EndWave();
+            }
+            return;
+        }
+        
+        // Spawn enemies at the wave's spawn rate
+        if (Time.time >= _lastSpawnTime + currentWave.spawnRate)
         {
             SpawnEnemy();
             _lastSpawnTime = Time.time;
         }
+    }
+    
+    /// <summary>
+    /// OOP PRINCIPLE: ABSTRACTION
+    /// Hides the complexity of starting a new wave
+    /// </summary>
+    private void StartWave()
+    {
+        if (_currentWaveIndex >= waves.Count)
+        {
+            // All waves completed!
+            Debug.Log("All waves completed! Victory!");
+            if (GameManager.Instance != null)
+            {
+                GameManager.Instance.OnAllWavesComplete();
+            }
+            return;
+        }
+        
+        Wave wave = waves[_currentWaveIndex];
+        _isWaveActive = true;
+        _enemiesSpawnedThisWave = 0;
+        _enemiesAliveThisWave = 0;
+        _lastSpawnTime = Time.time;
+        
+        Debug.Log($"Starting {wave.waveName} - Enemies: {wave.enemyCount}");
+        
+        // Notify GameManager of new wave
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.OnWaveStarted(_currentWaveIndex + 1, wave.waveName);
+        }
+    }
+    
+    /// <summary>
+    /// OOP PRINCIPLE: ABSTRACTION
+    /// Encapsulates wave completion logic
+    /// </summary>
+    private void EndWave()
+    {
+        _isWaveActive = false;
+        _waveEndTime = Time.time + timeBetweenWaves;
+        
+        Debug.Log($"{waves[_currentWaveIndex].waveName} completed!");
+        
+        if (GameManager.Instance != null)
+        {
+            GameManager.Instance.OnWaveCompleted(_currentWaveIndex + 1);
+        }
+        
+        _currentWaveIndex++;
+    }
+    
+    /// <summary>
+    /// Creates default wave progression if none configured
+    /// </summary>
+    private void CreateDefaultWaves()
+    {
+        waves = new List<Wave>
+        {
+            new Wave("Wave 1", 5, 2f),
+            new Wave("Wave 2", 8, 1.5f),
+            new Wave("Wave 3", 12, 1.2f),
+            new Wave("Wave 4", 15, 1f),
+            new Wave("Wave 5 - BOSS WAVE", 20, 0.8f)
+        };
+        Debug.Log("Default waves created");
     }
     
     /// <summary>
@@ -93,11 +241,10 @@ public class EnemySpawner : MonoBehaviour
         
         if (enemy != null)
         {
-            _currentEnemyCount++;
-            Debug.Log($"Enemy spawned! Total: {_currentEnemyCount}/{maxEnemies}");
+            _enemiesSpawnedThisWave++;
+            _enemiesAliveThisWave++;
             
-            // Subscribe to enemy death to track count (would need event system for production)
-            // For now, we'll rely on manual tracking
+            Debug.Log($"Enemy spawned! Wave progress: {_enemiesSpawnedThisWave}/{waves[_currentWaveIndex].enemyCount}");
         }
     }
     
@@ -121,14 +268,30 @@ public class EnemySpawner : MonoBehaviour
     }
     
     /// <summary>
-    /// Public method to track when enemies are returned to pool
-    /// Call this from enemy death events or decrement counter
+    /// OOP PRINCIPLE: EVENT-DRIVEN ARCHITECTURE
+    /// Called by GameManager when an enemy dies.
+    /// This is better than FindObjectsOfType() - uses manager communication pattern.
     /// </summary>
-    public void OnEnemyDestroyed()
+    public void OnEnemyKilled()
     {
-        _currentEnemyCount--;
-        _currentEnemyCount = Mathf.Max(_currentEnemyCount, 0);
+        _enemiesAliveThisWave--;
+        _enemiesAliveThisWave = Mathf.Max(_enemiesAliveThisWave, 0);
+        
+        Debug.Log($"Enemy killed! Remaining: {_enemiesAliveThisWave}");
+        
+        // Check if wave is complete (all spawned and all killed)
+        if (_enemiesSpawnedThisWave >= waves[_currentWaveIndex].enemyCount && _enemiesAliveThisWave <= 0)
+        {
+            EndWave();
+        }
     }
+    
+    /// <summary>
+    /// Public getter for current wave information (Encapsulation)
+    /// </summary>
+    public int CurrentWaveNumber => _currentWaveIndex + 1;
+    public string CurrentWaveName => _currentWaveIndex < waves.Count ? waves[_currentWaveIndex].waveName : "Complete";
+    public bool IsWaveActive => _isWaveActive;
     
     /// <summary>
     /// Visualization helper for debugging
